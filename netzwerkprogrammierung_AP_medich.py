@@ -31,9 +31,11 @@ class Server:
         self.sSock.bind((self.ip, self.port))
         self.sSock.listen(socket.SOMAXCONN)
         self.myMaster = None
-        self.running = 1
+        self.running = True
         
         self.waitForReqCons = False
+        self.concurrentMaster = False
+        self.totalMasterCheck = False
         
     def isMaster(self):
         """ Gibt zurueck, ob dieser Server Master des Netzwerks ist.
@@ -58,7 +60,52 @@ class Server:
         
         while True:
             try:
-                if (self.waitForReqCons):
+                if (self.totalMasterCheck):
+                    #ueberpruefe mit jeder einzelen Verbindung, welche auch
+                    #angeblich Master ist, wer von beiden Master waere, bis
+                    #nur noch ein Master uebrig ist.
+                    inSocket.send(bytes('-iammaster+' + str(self.getMasterVoteValue()), 'utf8'))
+                    print("-iammaster")
+                    data = inSocket.recv(1024)
+                    if (data.decode('utf8')[0:11] == "-iammaster+"):
+                        #extrahiere Information und vergleiche mit eigenem Wert
+                        masterValue = data.decode('utf8')[11:]
+                        if (str(masterValue).find('-', 0) > -1):
+                            masterValue = masterValue[0:str(masterValue).find('-', 0)]
+                        print(masterValue)
+                        if (self.masterVoteFunction(self.getMasterVoteValue(), masterValue)):
+                            #Server bleibt master
+                            self.myMaster = self
+                        else:
+                            #server ist kein master
+                            self.totalMasterCheck = False
+                        
+                if (self.concurrentMaster):
+                    #Server ist frisch beigetreten und koennte neuer Master sein
+                    inSocket.send(bytes('-mvotem', 'utf8'))
+                    print("-mvotem")
+                    data = inSocket.recv(1024)
+                    if (data.decode('utf8')[0:8] == "-mvotem+"):
+                        #master value des anderen Servers erhalten
+                        #extrahiere information und vergleiche mit eigenem
+                        #bestimme so neuen Master
+                        masterValue = data.decode('utf8')[8:]
+                        if (str(masterValue).find('-', 0) > -1):
+                            masterValue = masterValue[0:str(masterValue).find('-', 0)]
+                        print(masterValue)
+                        if (self.masterVoteFunction(self.getMasterVoteValue(), masterValue)):
+                            #Neuer Server ist neuer Master
+                            self.myMaster = self
+                            self.concurrentMaster = False
+                            #teile neuen Master mit
+                            for connection in self.connections:
+                                connection.send(bytes('-newmaster', 'utf8'))
+                        else:
+                            #server ist kein master
+                            #alter master bleibt bestehen
+                            self.concurrentMaster = False
+                
+                elif (self.waitForReqCons):
                     #frage beim Master Verbindung mit restlichen Servern an
                     #reqcons = request connections
                     inSocket.send(bytes(str("-reqcons+" + str(self.ip) + "+" + str(self.port)), 'utf8'))
@@ -68,19 +115,23 @@ class Server:
                         #Master hat Anfragen an restliche Server gesendet
                         #beende weitere Anfragen
                         self.waitForReqCons = False
+                        self.concurrentMaster = True
+                        print("concurrent")
                 
                 elif (self.myMaster == None):
+                    print("none master")
                     #Server ist ohne bekannten Master einem Netzwerk beigetreten
                     #frage Master oder Master Bedingungswert an
                     try:
                         inSocket.send(bytes('-votem', 'utf8'))
+                        print("-votem")
+                        data = inSocket.recv(1024)
                     except OSError as e:
-                        #gelegentliche Fehlermeldung beim schließen dieses Threads,
+                        #gelegentliche Fehlermeldung beim schließen dieses Threads oder der Verbindung,
                         #bevor hieraus alles gesendet wurde.
                         #Fehlermeldung hat keine Auswirkungen auf den Programmablauf
                         pass
-                    print("-votem")
-                    data = inSocket.recv(1024)
+                    
                     if (data.decode('utf8') == "-votem"):
                         #sende Nachricht mit Master Value zum voten
                         inSocket.send(bytes(str('-votem+' + str(self.getMasterVoteValue())), 'utf8'))
@@ -96,7 +147,10 @@ class Server:
                             #Server ist Master
                             self.myMaster = self
                         else:
+                            #server ist kein master
+                            #warte auf weitere nachrichten des masters
                             pass
+                        
                     elif (data.decode('utf8') == "-ismaster"):
                         self.myMaster = inSocket
                         #frage beim Master Verbindung mit restlichen Servern an
@@ -111,14 +165,13 @@ class Server:
                         port = address[(str(address).find('+', 0)+1):]
                         #neuer Server baut Verbindung zum Master auf und loescht
                         #aktuelle Verbindung
-                        print(ip)
-                        print(port)
                         self.connections.remove(inSocket)
                         inSocket.close()
                         self.connectToServer(ip, int(port))
                         
                 else:
                     #Server ist Master oder kennt Master
+                    #(oder kennt noch einen alten Master)
                     inSocket.send(bytes('-alive', 'utf8'))
                     data = inSocket.recv(1024)
                     if (data.decode('utf8') != "-alive"):
@@ -154,13 +207,31 @@ class Server:
                             ip = address[0:str(address).find('+', 0)]
                             port = address[(str(address).find('+', 0)+1):]
                             self.connectToServer(ip, int(port))
+                        elif (data.decode('utf8') == "-mvotem"):
+                            #sende Nachricht mit Master Value zum voten
+                            inSocket.send(bytes(str('-mvotem+' + str(self.getMasterVoteValue())), 'utf8'))
+                        elif (data.decode('utf8') == "-newmaster"):
+                            #setze Verbindung als neuen Master
+                            self.myMaster = inSocket
             
             except (ConnectionResetError, BrokenPipeError) as e:
                 print("connection lost!")
+                if (inSocket == self.myMaster):
+                    print("Master lost!")
+                    self.myMaster = self
+                    self.totalMasterCheck = True
                 self.connections.remove(inSocket)
+                print(len(self.connections))
+                if (self.totalMasterCheck):
+                    for connection in self.connections:
+                        connection.send(bytes('-iammaster+' + str(self.getMasterVoteValue()), 'utf8'))
                 if (len(self.connections) < 1):
                     #keine Verbindungen, vergiss Master
+                    #reset suchanfragen
                     self.myMaster = None
+                    self.totalMasterCheck = False
+                    self.concurrentMaster = False
+                    self.waitForReqCons = False
                 inSocket.close()
                 break
     
@@ -199,6 +270,8 @@ class Server:
 -cn: get number of connections")
             if (inText == "-m"):
                 print(self.isMaster())
+                if (self.myMaster == None):
+                    print("(none master)")
             elif (inText == "-t"):
                 print(self.startTime)
             elif (inText[0:3] == "-c "):
