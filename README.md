@@ -5,6 +5,7 @@ Dieses Programm ist Teil eines Projekts im Rahmen der Veranstaltung "Netzwerkpro
 Ziel ist es mehrere gleichwertige Server so zusammenzuschließen, dass diese automatisch einen Master bestimmen. Dabei soll dieser Bestimmungsvorgang möglichst flexibel
 sein und auch im Falle eines spontanen Serverausfalls einen neuen Master bestimmen.
 
+
 ## Verwendung
 
 Das Python Script wird mittels python3 aufgerufen, wobei als zusätzliche Argumente die gewünschte IPv4 Adresse sowie die Portnummer mitgegeben werden müssen. Zudem können schon hier Scripte, welche auf den Standard Servern oder dem Master laufen sollen spezifiziert werden.
@@ -39,6 +40,8 @@ Sobald der Server gestartet ist, können weitere Befehle eingegeben werden. Dies
 
 `-sslp <float>`:	Zeit, welche der Thread nach Ausführung des Skriptes schläft, bevor das Skript erneut ausgeführt wird. Der Standardwert beträgt 1. (script sleep)
 
+`-debug <1/0>`:		Debugging Ausgaben werden hiermit ein- oder ausgeschaltet.
+
 
 ## Funktionsweise
 
@@ -51,9 +54,10 @@ zum Master getätigt und der oben beschriebene Vorgang läuft ab.
 
 Ein anderes Szenraio, bei dem gegebenenfalls ein neue Master bestimmt werden muss, ist die Verringerung der Serverzahl. Wird ein beliebiger Server vom Netz entfernt, so
 ändert sich nichts. Wird der Master entfernt, muss ein neuer bestimmt werden. Dabei werden die Vermerke über den bisherigen Master in allen gelöscht, sobald festgestellt wird,
-dass die Verbindung nicht mehr besteht. Anschließend erfolgt ein neuer Vergleich der Masterbedingung unter den verbliebenen Servern, indem jeder Server zum Master wird. Nun wird mit jeder Verbindung überprüft, ob der eigene Master Status erhalten bleibt oder nicht. Am Ende bleibt nur noch ein einzelner Master Server nach nur einer Iteration durch die Serverliste.
+dass die Verbindung nicht mehr besteht. Anschließend erfolgt ein neuer Vergleich der Masterbedingung unter den verbliebenen Servern, indem jeder Server zum Master wird. Nun wird mit jeder Verbindung überprüft, ob der eigene Master Status erhalten bleibt oder nicht. Am Ende bleibt nur noch ein einzelner Master Server. Ein Timeout von 5 Sekunden beugt Fehlern durch leichte Verbindungsprobleme vor. Alle anderen Master setzen ihren Masterstatus auf "None". So werden sie behandelt, als wären sie gerade erst dem Netz beigetreten und erhalten die Information über den aktuellen Master. Damit sie aber nicht fälschlicherweise untereinander ein neues Votum abhalten während der tatsächliche Master noch auf den Ablauf des Timeouts wartet, darf das Neuvotum unter Servern nur stattfinden, wenn sie das erste Mal einem Netz beitreten. Sobald ihnen ein Master bekannt wurde, verlieren sie dieses Recht, bis das gesamte Netz aufgelöst ist.
 
-Werden alle Server bis auf den Master vom Netz genommen, so verliert auch der Master Server seinen Status und wird zu einem gewöhnlichen Server.
+Werden alle Server bis auf den Master vom Netz genommen, so verliert auch der Master Server seinen Status und wird wieder zu einem gewöhnlichen Server.
+
 
 ## Beispiel
 
@@ -82,8 +86,23 @@ Bei Erfolg wird die Socket in der Kommandozeile angezeigt. Diese kann auch über
 ```
 
 Über `-m` prüfen wir, welcher der Server der aktuelle Master ist und stellen fest, dass dies beim ersten Server der Fall ist.
-Über exakt die selbe Eingabe wie oben können wir auch den dritten Server mit dem ersten Verbinden. Das Beenden des Servers 3 über einen Keyboard Interrupt mit `Strg + C`hat dabei keine Auswirkung auf den Masterstatus, wir sehen jedoch bei Server 1 und 2 eine Meldung über den Abbruch einer Verbindung.
-Bei einem erneuten Start von Server 3 können wir ihn diesmal auch mit Server 2 verbinden. Dieser wird ihn aber an den Master weiterleiten und die erste Verbindung wieder kappen. Der Master koordiniert dann ein Verbinden von allen Servern zu dem Neuen hin.
+Über exakt die selbe Eingabe wie oben können wir auch den dritten Server mit dem ersten Verbinden. Da alle Server nach dem ersten gestartet wurden, bleibt Server 1 Master. Das Beenden des Servers 3 über einen Keyboard Interrupt mit `Strg + C`hat außerdem keine Auswirkung auf den Masterstatus, wir sehen jedoch bei Server 1 und 2 eine Meldung über den Abbruch einer Verbindung.
+Bei einem erneuten Start von Server 3 können wir ihn diesmal auch mit Server 2 verbinden. 
+
+```
+-c 127.0.0.1 11000
+
+```
+
+Dieser wird ihn aber an den Master weiterleiten und die erste Verbindung wieder kappen. Der Master koordiniert dann ein Verbinden von allen Servern zu dem Neuen hin. In diesem Fall verbindet sich Server 2 mit Server 3.
+
+Nun können wir schauen, ob das Netz einen neuen Master bestimmt, wenn Server 1 vom Netz geht. Da Server 2 der nächst älteste Server ist, erwarten wir, dass Server 2 Master wird.
+Bei einem Abbruch müssen wir den Timeout von 5 Sekunden abwarten. Anschließend könnend wir mit `-m` überprüfen, wer der Master ist bzw. in das Terminal von Server 2 schauen, welcher mitteilt, dass er nach einem Timeout neuer Master ist.
+
+```
+timeout! I'm new Master
+```
+
 
 ### Server Skripte
 
@@ -111,6 +130,7 @@ Falls das Skript zu häufig Aufgaben gibt, können wir dem Programm Pausen vorsc
 ```
 
 Nun findet nur noch alle 10 Sekunden eine Ausgabe statt.
+
 
 ## Lizenz
 
