@@ -6,6 +6,7 @@ Created on Tue May 28 10:30:31 2019
 @author: medich
 """
 
+import subprocess
 import sys
 import socket
 import threading
@@ -50,6 +51,13 @@ class Server:
         self.waitForReqCons = False
         self.concurrentMaster = False
         self.totalMasterCheck = False
+        
+        #ausfuehrbare Skripte
+        self.defaultScript = ""
+        self.masterScript = ""
+        #steuerungsparameter fuer die scripte
+        self.loopScript = True
+        self.scriptSleep = 1
         
     def isMaster(self):
         """ 
@@ -97,6 +105,7 @@ class Server:
         """
         
         return float(value)
+    
     
     
     def connectionHandler (self, inSocket, addr):
@@ -267,6 +276,9 @@ class Server:
                         elif (data.decode('utf8') == "-newmaster"):
                             #setze Verbindung als neuen Master
                             self.myMaster = inSocket
+                        elif (data.decode('utf8')[0:5] == "-msg+"):
+                            #printe erhaltene Nachricht
+                            print(data.decode('utf8')[5:])
             
             #Verbindungsabbruch
             except (ConnectionResetError, BrokenPipeError) as e:
@@ -274,9 +286,10 @@ class Server:
                 if (inSocket == self.myMaster):
                     print("Master lost!")
                     self.myMaster = self
-                    self.totalMasterCheck = True
+                    #self.totalMasterCheck = True
                 self.connections.remove(inSocket)
-                print(len(self.connections))
+                print("Connections left: " + str(len(self.connections)))
+                inSocket.close()
                 if (self.totalMasterCheck):
                     for connection in self.connections:
                         connection.send(bytes('-iammaster+' + str(self.getMasterVoteValue()), 'utf8'))
@@ -289,6 +302,7 @@ class Server:
                     self.waitForReqCons = False
                 inSocket.close()
                 break
+    
     
     def connectToServer(self, cAdress, cPort):
         """ 
@@ -336,7 +350,11 @@ class Server:
                 print("Commands:\n-t: print start time\n\
 -m: check if server is master\n\
 -c: <ip> <port>: connect to ip and port\n\
--cn: get number of connections")
+-cn: get number of connections\n\
+-cl: get list of sockets\n\
+-msg <text>: send text to all servers and force them to print it out\n\
+-ds <script> <args>: specify a script that is executed by default server\n\
+-ms <script> <args>: specify a script that is executed by master server\n")
             if (inText == "-m"):
                 #Prueft, ob Server Master ist
                 print(self.isMaster())
@@ -361,14 +379,39 @@ class Server:
                 #Zeige Verbindungen
                 for connection in self.connections:
                     print(connection)
-                
+            elif (inText[0:5] == "-msg "):
+                #sende eine Nachricht an
+                for connection in self.connections:
+                    connection.send(bytes('-msg+' + str(inText[5:]), 'utf8'))
+            elif (inText[0:4] == "-ds "):
+                #default script server
+                self.defaultScript = inText[4:]
+            elif (inText[0:4] == "-ms "):
+                #master script server
+                self.masterScript = inText[4:]
+            elif (inText[0:6] == "-loop "):
+                if (inText[6:] == "1"):
+                    self.loopScript = True
+                elif (inText[6:] == "0"):
+                    self.loopScript = False
+            elif (inText[0:6] == "-sslp "):
+                try:
+                    self.scriptSleep = float(inText[6:])
+                except:
+                    print("wrong data type. Float expected.")
         
     
     def run(self):
         """ 
+        Startet alle wichtigen Vorgaenge.
         Server lauscht nach eingehenden Verbindungen und oeffnet dann einen
         thread fuer die Kommunikation.
         """
+        
+        #starte listener fuer inputs
+        scriptThread = threading.Thread(target=self.runScripts)
+        scriptThread.daemon = True
+        scriptThread.start()
         
         inSocket = None
         try:
@@ -388,17 +431,81 @@ class Server:
         finally:
             if (inSocket != None):
                 inSocket.close()
+                
+                
+    def runScripts(self):
+        """
+        Server verwendet in neuen Threads die mitgegebenen Skripte.
+        Welches der beiden gegebenen Skripte der Server ausfuehrt, ist 
+        abhaengig davon, ob der Server Master ist oder nicht.
+        
+        Mithilfe der Befehle -sd und -sm oder zu beginn ueber Argumente 
+        lassen sich die Skripte spezifizieren.
+        """
+        
+        while True:
+            if (self.isMaster()):
+                #benutze master script
+                if (self.masterScript != ""):
+                    #fuehre script aus
+                    try:
+                        subprocess.call(['python', self.masterScript])
+                        if (not(self.loopScript)):
+                            self.masterScript = ""
+                        time.sleep(self.scriptSleep)
+                    except:
+                        self.masterScript = ""
+                        print("master script is not executable")
+            else:
+                #benutze default script
+                if (self.defaultScript != ""):
+                    #fuehre script aus
+                    try:
+                        subprocess.call(['python', self.defaultScript])
+                        if (not(self.loopScript)):
+                            self.defaultScript = ""
+                        time.sleep(self.scriptSleep)
+                    except:
+                        self.defaultScript = ""
+                        print("default script is not executable")
+                
+        
+        
             
 """
 Programm Start.
 Programm startet mit 2 Argumenten fuer die '__init__()' Funktion der Server
 Klasse, der Ipv4 Adresse und dem Port des Servers.
 """
-if (len(sys.argv) == 3):
+if (len(sys.argv) >= 3):
     server = Server(sys.argv[1], int(sys.argv[2]))
+    #extrahiere argumente
+    if (len(sys.argv) >= 4):
+        mode = ""
+        ds = ""
+        ms = ""
+        for arg in sys.argv[3:]:
+            if (arg == "-ds"):
+                mode = "ds"
+            elif (arg == "-ms"):
+                mode ="ms"
+            else:
+                if (mode == "ds"):
+                    ds = ds + " " + arg
+                elif (mode == "ms"):
+                    ms = ms + " " + arg
+        #speichere getrimmte dateinamen ab
+        if (len(ds) > 0):
+            server.defaultScript = ds[1:]
+        if (len(ms) > 0):
+            server.masterScript = ms[1:]
+        
     try:
         server.run()
     except KeyboardInterrupt as e:
         sys.exit("\nQuit Server")
 else:
-    sys.exit("Missing arguments\nUse IP-Adress and Port")
+    sys.exit("Missing arguments\nUsage:\n\
+ python3 netwerkprogrammierung_AP_medich.py <ip> <port> -ds <default script> <ds args> -ms <master script> <ms args>\n\
+ The parameters <default script> and <master script> are optional.\n\
+ These specify scripts running on the server, depending on the status of the server.")
