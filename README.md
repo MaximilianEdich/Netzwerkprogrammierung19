@@ -45,18 +45,20 @@ python3 netzwerkprogrammierung_AP_medich.py 127.0.0.20 10002
 python3 netzwerkprogrammierung_AP_medich.py 127.0.0.30 10003
 
 ```
-Nun können der erste und zweite Server verbunden werden. Dazu muss in einem der Server, hier im zweiten, der Connect Befehl -c ausgeführt werden:
+Nun können der erste und zweite Server verbunden werden. Dazu muss in einem der Server, hier im zweiten, der Connect Befehl `-c` ausgeführt werden:
 ```
 -c 127.0.0.1 10001
 
 ```
-Bei Erfolg wird die Socket in der Kommandozeile angezeigt. Diese kann auch über den Befehl -cl mit allen anderen Verbindungen angezeigt werden.
+Bei Erfolg wird die Socket in der Kommandozeile angezeigt. Diese kann auch über den Befehl `-cl` mit allen anderen Verbindungen angezeigt werden.
 ```
 <socket.socket fd=5, family=AddressFamily.AF_INET, type=SocketKind.SOCK_STREAM, proto=0, laddr=('127.0.0.1', 49850), raddr=('127.0.0.1', 10001)>
 
 ```
 
-Über -m prüfen wir, welcher der Server der aktuelle Master ist und stellen fest, dass dies beim ersten Server der Fall ist.
+Über `-m` prüfen wir, welcher der Server der aktuelle Master ist und stellen fest, dass dies beim ersten Server der Fall ist.
+Über exakt die selbe Eingabe wie oben können wir auch den dritten Server mit dem ersten Verbinden. Das Beenden des Servers 3 über `Strg + C`hat dabei keine Auswirkung auf den Masterstatus, wir sehen jedoch bei Server 1 und 2 eine Meldung über den Abbruch einer Verbindung.
+Bei einem erneuten Start von Server 3 können wir ihn diesmal auch mit Server 2 verbinden. Dieser wird ihn aber an den Master weiterleiten und die erste Verbindung wieder kappen. Der Master koordiniert dann ein Verbinden von allen Servern zu dem Neuen hin.
 
 ## Lizenz
 

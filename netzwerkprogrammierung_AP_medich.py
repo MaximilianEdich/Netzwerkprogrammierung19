@@ -13,7 +13,9 @@ import time
 
 class Server:
     """
-    
+    Ein Server mit eines festen IPv4 Adresse und einem festen Port.
+    Er kann eine Verbindung zu beliebig vielen weiteren Servern aufnehmen und
+    über TCP mit ihnen kommunizieren.
     """
     
     connections= []
@@ -21,41 +23,93 @@ class Server:
     sSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
     
     def __init__(self, pIp, pPort):
-        """ Initialisiert Standartwerte des Servers und macht die Verbindung
+        """ 
+        Initialisiert Standartwerte des Servers und macht die Verbindung
         zugaenglich.
+        
+        Parameter
+        ---------
+            pIp : str
+                die gewuenschte IPv4 Adresse des Servers
+            pPort : int
+                der gewuenschte Port
         """
         
+        #speichere Startzeit des Servers und Adressen-Argumente.
         self.startTime = time.time()
         self.ip = pIp
         self.port = pPort
+        
+        #starte socket und lausche auf dem port nach Verbindungsanfragen
         self.sSock.bind((self.ip, self.port))
         self.sSock.listen(socket.SOMAXCONN)
+        
+        #variablen fuer die Kommunikation mit anderen Servern
         self.myMaster = None
         self.running = True
-        
         self.waitForReqCons = False
         self.concurrentMaster = False
         self.totalMasterCheck = False
         
     def isMaster(self):
-        """ Gibt zurueck, ob dieser Server Master des Netzwerks ist.
+        """ 
+        Gibt zurueck, ob dieser Server Master des Netzwerks ist.
         """
+        
         return self.myMaster == self
     
     def getMasterVoteValue(self):
+        """
+        Randbedingung, um einen Master zu bestimmen.
+        In der Standardversion gibt diese Funktion die Startzeit des Servers
+        zurueck.
+        """
+        
         return self.startTime
     
-    def masterVoteFunction(self, thisServerValue, remoteServerValue):
-        return self.convertMVValue(thisServerValue) < self.convertMVValue(remoteServerValue)
+    def masterVoteFunction(self, localServerValue, remoteServerValue):
+        """
+        Randbedingungsfunktion. Nimmt die relevanten Werte dieses Servers und
+        eines Kommunikationspartners entgegen.
+        
+        Parameter
+        ---------
+            localServerValue
+                Wert dieses Servers
+            remoteServerValue
+                Wert des Kommunikationspartners (anderer Server)
+        
+        Returns
+        -------
+            True
+                dieser Server ist gegenueber dem anderen ein valider Master
+            False
+                der andere Server ist gegenueber diesem ein valider Master
+        """
+        
+        return self.convertMVValue(localServerValue) < self.convertMVValue(remoteServerValue)
     
     def convertMVValue(self, value):
+        """
+        Konvertiert die Eingaben in die masterVoteFunction(lsv, rsv) in die
+        richtigen Datentypen, damit die Funktion mit ihnen einen Maser
+        ermitteln kann.
+        """
+        
         return float(value)
     
     
-
     def connectionHandler (self, inSocket, addr):
-        """ Regelt die beidseitige Verbindung zwischen zwei Servern.
+        """ 
+        Regelt die beidseitige Verbindung zwischen zwei Servern.
         Tauscht Nachrichten aus und bestimmt neue Master.
+        
+        Parameter
+        ---------
+            inSocket
+                die Verbindung zum anderen Server
+            addr
+                Adresse des anderen Servers
         """
         
         while True:
@@ -177,7 +231,7 @@ class Server:
                     if (data.decode('utf8') != "-alive"):
                         if (data.decode('utf8') == "-votem"):
                             #neuer Server kenn keinen Master
-                            if (self.myMaster == self):
+                            if (self.isMaster()):
                                 #sende neuem Server, dass dieser hier Master ist
                                 inSocket.send(bytes('-ismaster', 'utf8'))
                                 print("-ismaster")
@@ -185,7 +239,7 @@ class Server:
                                 #sende dem neuen Server, wer der Master ist
                                 print(str(self.myMaster.getsockname()[1]))
                                 inSocket.send(bytes('-master+' + str(self.myMaster.getpeername()[0]) + "+" + str(self.myMaster.getpeername()[1]), 'utf8'))
-                        elif (self.myMaster == self and data.decode('utf8')[0:9] == "-reqcons+"):
+                        elif (self.isMaster() and data.decode('utf8')[0:9] == "-reqcons+"):
                             #Master erhaelt Beitrittsanfrage eines neuen Servers
                             #extrahiere serverinformationen aus nachricht
                             address = data.decode('utf8')[9:]
@@ -214,6 +268,7 @@ class Server:
                             #setze Verbindung als neuen Master
                             self.myMaster = inSocket
             
+            #Verbindungsabbruch
             except (ConnectionResetError, BrokenPipeError) as e:
                 print("connection lost!")
                 if (inSocket == self.myMaster):
@@ -236,7 +291,16 @@ class Server:
                 break
     
     def connectToServer(self, cAdress, cPort):
-        """ Versucht einen Verbindungsaufbau zur gewuenschten IP und Port.
+        """ 
+        Versucht einen Verbindungsaufbau zur gewuenschten IP und Port.
+        Bei Erfolg wird in einem Thread die Funktion 'connectionHandler()' gestartet.
+        
+        Parameter
+        ---------
+            cAdress
+                IPv4 Adresse des Zielservers
+            cPort
+                Port des Zielservers
         """
         
         validRequest = True
@@ -261,20 +325,28 @@ class Server:
     
     
     def inputListener(self):
+        """
+        Lauscht nach Tasteneingaben des Benutzers und verarbeitet Kommandos.
+        """
+        
         while True:
             inText = input("")
             if (inText == "-h"):
+                #Befehlsausgabe
                 print("Commands:\n-t: print start time\n\
 -m: check if server is master\n\
 -c: <ip> <port>: connect to ip and port\n\
 -cn: get number of connections")
             if (inText == "-m"):
+                #Prueft, ob Server Master ist
                 print(self.isMaster())
                 if (self.myMaster == None):
                     print("(none master)")
             elif (inText == "-t"):
+                #Printet Startzeit des Servers
                 print(self.startTime)
             elif (inText[0:3] == "-c "):
+                #Verbinde zum gewuenschten Server
                 spacer = inText.find(" ", 3)
                 cAdress = inText[3:spacer]
                 cPort = int(inText[spacer+1:])
@@ -283,15 +355,18 @@ class Server:
                 else:
                     print("server cannot connect to itself!")
             elif (inText == "-cn"):
+                #Zeige Anzahl von Verbindungen
                 print(len(self.connections))
             elif (inText == "-cl"):
+                #Zeige Verbindungen
                 for connection in self.connections:
                     print(connection)
                 
         
     
     def run(self):
-        """ Server lauscht nach eingehenden Verbindungen und oeffnet dann einen
+        """ 
+        Server lauscht nach eingehenden Verbindungen und oeffnet dann einen
         thread fuer die Kommunikation.
         """
         
@@ -314,7 +389,11 @@ class Server:
             if (inSocket != None):
                 inSocket.close()
             
-
+"""
+Programm Start.
+Programm startet mit 2 Argumenten fuer die '__init__()' Funktion der Server
+Klasse, der Ipv4 Adresse und dem Port des Servers.
+"""
 if (len(sys.argv) == 3):
     server = Server(sys.argv[1], int(sys.argv[2]))
     try:
