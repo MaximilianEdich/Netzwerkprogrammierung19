@@ -33,6 +33,8 @@ class Server:
         self.myMaster = None
         self.running = 1
         
+        self.waitForReqCons = False
+        
     def isMaster(self):
         """ Gibt zurueck, ob dieser Server Master des Netzwerks ist.
         """
@@ -56,10 +58,28 @@ class Server:
         
         while True:
             try:
-                if (self.myMaster == None):
+                if (self.waitForReqCons):
+                    #frage beim Master Verbindung mit restlichen Servern an
+                    #reqcons = request connections
+                    inSocket.send(bytes(str("-reqcons+" + str(self.ip) + "+" + str(self.port)), 'utf8'))
+                    print("-reqcons+" + str(self.ip) + "+" + str(self.port))
+                    data = inSocket.recv(1024)
+                    if (data.decode('utf8')[0:8] == "-newcon+"):
+                        #Master hat Anfragen an restliche Server gesendet
+                        #beende weitere Anfragen
+                        self.waitForReqCons = False
+                
+                elif (self.myMaster == None):
                     #Server ist ohne bekannten Master einem Netzwerk beigetreten
                     #frage Master oder Master Bedingungswert an
-                    inSocket.send(bytes('-votem', 'utf8'))
+                    try:
+                        inSocket.send(bytes('-votem', 'utf8'))
+                    except OSError as e:
+                        #gelegentliche Fehlermeldung beim schließen dieses Threads,
+                        #bevor hieraus alles gesendet wurde.
+                        #Fehlermeldung hat keine Auswirkungen auf den Programmablauf
+                        pass
+                    print("-votem")
                     data = inSocket.recv(1024)
                     if (data.decode('utf8') == "-votem"):
                         #sende Nachricht mit Master Value zum voten
@@ -79,6 +99,23 @@ class Server:
                             pass
                     elif (data.decode('utf8') == "-ismaster"):
                         self.myMaster = inSocket
+                        #frage beim Master Verbindung mit restlichen Servern an
+                        #request connections
+                        self.waitForReqCons = True
+                    elif (data.decode('utf8')[0:8] == "-master+"):
+                        #extrahiere master-server informationen aus Nachricht
+                        address = data.decode('utf8')[8:]
+                        if (str(address).find('-', 0) > -1):
+                            address = address[0:str(address).find('-', 0)]
+                        ip = address[0:str(address).find('+', 0)]
+                        port = address[(str(address).find('+', 0)+1):]
+                        #neuer Server baut Verbindung zum Master auf und loescht
+                        #aktuelle Verbindung
+                        print(ip)
+                        print(port)
+                        self.connections.remove(inSocket)
+                        inSocket.close()
+                        self.connectToServer(ip, int(port))
                         
                 else:
                     #Server ist Master oder kennt Master
@@ -86,10 +123,38 @@ class Server:
                     data = inSocket.recv(1024)
                     if (data.decode('utf8') != "-alive"):
                         if (data.decode('utf8') == "-votem"):
+                            #neuer Server kenn keinen Master
                             if (self.myMaster == self):
+                                #sende neuem Server, dass dieser hier Master ist
                                 inSocket.send(bytes('-ismaster', 'utf8'))
+                                print("-ismaster")
                             else:
-                                pass
+                                #sende dem neuen Server, wer der Master ist
+                                print(str(self.myMaster.getsockname()[1]))
+                                inSocket.send(bytes('-master+' + str(self.myMaster.getpeername()[0]) + "+" + str(self.myMaster.getpeername()[1]), 'utf8'))
+                        elif (self.myMaster == self and data.decode('utf8')[0:9] == "-reqcons+"):
+                            #Master erhaelt Beitrittsanfrage eines neuen Servers
+                            #extrahiere serverinformationen aus nachricht
+                            address = data.decode('utf8')[9:]
+                            if (str(address).find('-', 0) > -1):
+                                address = address[0:str(address).find('-', 0)]
+                            ip = address[0:str(address).find('+', 0)]
+                            port = address[(str(address).find('+', 0)+1):]
+                            #sende an jeden server einen Verbindungsbefehl zum
+                            #neuen server
+                            for connection in self.connections:
+                                connection.send(bytes(str('-newcon+' + str(ip) + "+" + str(port)), 'utf8'))
+                                print("send newcon")
+                        elif (data.decode('utf8')[0:8] == "-newcon+"):
+                            #baue verbindung zum neuen server auf, fall es nicht
+                            #der server selbst ist.
+                            address = data.decode('utf8')[8:]
+                            if (str(address).find('-', 0) > -1):
+                                address = address[0:str(address).find('-', 0)]
+                            ip = address[0:str(address).find('+', 0)]
+                            port = address[(str(address).find('+', 0)+1):]
+                            self.connectToServer(ip, int(port))
+            
             except (ConnectionResetError, BrokenPipeError) as e:
                 print("connection lost!")
                 self.connections.remove(inSocket)
@@ -103,11 +168,14 @@ class Server:
         """ Versucht einen Verbindungsaufbau zur gewuenschten IP und Port.
         """
         
-        validRequest = 1
-        for connection in self.connections:
-            if (cAdress == connection.getpeername()[0] and cPort == connection.getpeername()[1]):
-                validRequest = 0
-                print("already connected to this server!")
+        validRequest = True
+        if (cAdress == self.ip and cPort == self.port):
+            validRequest = False
+        else:
+            for connection in self.connections:
+                if (cAdress == connection.getpeername()[0] and cPort == connection.getpeername()[1]):
+                    validRequest = False
+                    print("already connected to this server!")
         
         if (validRequest):
             cSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -125,15 +193,12 @@ class Server:
         while True:
             inText = input("")
             if (inText == "-h"):
-                print("Commands:\n-q: quit server\n-t: print start time\n\
+                print("Commands:\n-t: print start time\n\
 -m: check if server is master\n\
 -c: <ip> <port>: connect to ip and port\n\
 -cn: get number of connections")
             if (inText == "-m"):
                 print(self.isMaster())
-            elif (inText == "-q"):
-                self.running = 0
-                self.sSock.close()
             elif (inText == "-t"):
                 print(self.startTime)
             elif (inText[0:3] == "-c "):
